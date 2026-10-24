@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
-from nixbot.config import RepoFilters
+from nixbot.approval import untrusted
+from nixbot.config import PrApprovalConfig, RepoFilters
 from nixbot.forge import (
     DiscoveredRepo,
     ForgeError,
@@ -32,6 +33,7 @@ from nixbot.hook_secrets import WebhookSecrets
 from nixbot.reconcile import (
     RemoteHead,
     gitea_heads,
+    github_heads,
     gitlab_heads,
     max_pr_updated,
     reconcile_repo,
@@ -43,6 +45,7 @@ from nixbot.status import (
     StatusState,
 )
 from nixbot.tests.test_status import _MemoryCheckRunIds
+from nixbot.webhooks import ChangeRequest, parse_github_event
 
 from .support import (
     FakeGitea,
@@ -656,6 +659,111 @@ async def test_gitea_heads_encode_slashed_default_branch(pool: asyncpg.Pool) -> 
     client = gitea_client(handler)
     heads = await gitea_heads(client, project)
     assert [h.commit_sha for h in heads] == ["head-rel"]
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl required")
+async def test_pr_approval_admits_webhook_and_reconciled_pr_alike(
+    github_client: GitHubAppClient, pool: asyncpg.Pool
+) -> None:
+    """Webhooks and the reconciliation poller must reach the same
+    admission decision: a reconciliation pass (missed webhook, restart)
+    must not bypass the approval gate, nor hold a PR the webhook built."""
+    owner, name = "acme", "auto"
+    base_repo_id, fork_repo_id = 4242, 999
+    pulls = [
+        # (number, login, author_association, head repo id)
+        (1, "our-updater[bot]", "NONE", base_repo_id),
+        (2, "renovate[bot]", "NONE", fork_repo_id),
+        (3, "eve", "NONE", base_repo_id),
+        (4, "eve", "MEMBER", fork_repo_id),
+    ]
+    api_pulls = [
+        {
+            "number": number,
+            "user": {"login": login},
+            "author_association": association,
+            "head": {
+                "ref": f"branch-{number}",
+                "sha": f"sha-{number}",
+                "repo": {"id": head_repo_id},
+            },
+            "base": {"ref": "main", "sha": "base-main", "repo": {"id": base_repo_id}},
+            "updated_at": "2026-06-09T10:00:00Z",
+        }
+        for number, login, association, head_repo_id in pulls
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/app/installations/11/access_tokens":
+            return httpx.Response(201, json={"token": "ghs_token_11"})
+        if path == f"/repos/{owner}/{name}/branches/main":
+            return httpx.Response(200, json={"commit": {"sha": "head-main"}})
+        if path == f"/repos/{owner}/{name}/pulls":
+            if request.url.params.get("page", "1") != "1":
+                return httpx.Response(200, json=[])
+            return httpx.Response(200, json=api_pulls)
+        return httpx.Response(404)
+
+    github_client.repo_installations[f"{owner}/{name}"] = 11
+    github_client.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    project_id = await insert_project(
+        pool, name, owner=owner, forge="github", forge_repo_id="auto-1"
+    )
+    # A build record makes this a recovery pass, not first contact.
+    await insert_build(pool, project_id, commit_sha="head-main", status="succeeded")
+    project = await RepoStore(pool).by_forge_id("github", "auto-1")
+    assert project is not None
+
+    reconciled: dict[int, ChangeRequest] = {}
+
+    class Sink:
+        async def submit(self, event: object) -> None:
+            if isinstance(event, ChangeRequest) and event.pr_number is not None:
+                reconciled[event.pr_number] = event
+
+    heads = await github_heads(github_client, project)
+    await reconcile_repo(pool, project, heads, Sink())
+    assert sorted(reconciled) == [1, 2, 3, 4]
+
+    config = PrApprovalConfig(
+        enable=True,
+        trust_same_repo=False,
+        trusted_authors=["github:our-updater[bot]"],
+    )
+    expected = {1: False, 2: True, 3: True, 4: False}
+    for number, login, association, head_repo_id in pulls:
+        payload = {
+            "action": "opened",
+            "repository": {"id": base_repo_id, "full_name": f"{owner}/{name}"},
+            "sender": {"login": "maint", "type": "User"},
+            "pull_request": {
+                "number": number,
+                "state": "open",
+                "user": {"login": login, "type": "User"},
+                "author_association": association,
+                "head": {
+                    "ref": f"branch-{number}",
+                    "sha": f"sha-{number}",
+                    "repo": {"id": head_repo_id, "full_name": f"{owner}/{name}"},
+                },
+                "base": {
+                    "ref": "main",
+                    "sha": "base-main",
+                    "repo": {"id": base_repo_id, "full_name": f"{owner}/{name}"},
+                },
+            },
+        }
+        webhook = parse_github_event("pull_request", payload)
+        assert isinstance(webhook, ChangeRequest)
+        hook, polled = webhook, reconciled[number]
+        assert (hook.pr_author, hook.author_association, hook.head_in_base_repo) == (
+            polled.pr_author,
+            polled.author_association,
+            polled.head_in_base_repo,
+        )
+        assert untrusted(config, hook) is expected[number]
+        assert untrusted(config, polled) is expected[number]
 
 
 async def test_reconcile_unbuilt_heads(pool: asyncpg.Pool) -> None:

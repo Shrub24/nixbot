@@ -48,6 +48,14 @@ in
       { pkgs, ... }:
       {
         imports = [ (import ./github-node.nix { flakeText = testFlake; }) ];
+        # No pull requests reach this node, so the gate stays idle; the
+        # testScript asserts these values arrive in the generated
+        # application config.
+        services.nixbot.prApproval = {
+          enable = true;
+          trustSameRepo = false;
+          trustedAuthors = [ "github:our-updater[bot]" ];
+        };
         services.nixbot.uploaders = [
           {
             name = "local-cache";
@@ -199,6 +207,22 @@ in
         github.wait_until_succeeds(
             "curl --fail -s http://127.0.0.1:8010/health", timeout=120
         )
+
+    with subtest("github: prApproval options reach the application config"):
+        exec_start = github.succeed("systemctl show nixbot -p ExecStart --value")
+        config_path = exec_start.split("--config ", 1)[1].split(" ")[0]
+        config = json.loads(github.succeed(f"cat {config_path}"))
+        assert config["pr_approval"] == {
+            "enable": True,
+            "trust_same_repo": False,
+            "trusted_authors": ["github:our-updater[bot]"],
+            "trusted_associations": [
+                "OWNER",
+                "MEMBER",
+                "COLLABORATOR",
+                "CONTRIBUTOR",
+            ],
+        }, config["pr_approval"]
 
     with subtest("github: project discovered from fake forge"):
         def github_project_discovered(_ignore):

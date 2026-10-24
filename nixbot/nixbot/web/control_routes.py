@@ -257,7 +257,7 @@ class _ControlRoutes:
         name: str,
         pr_number: int,
     ) -> dict:
-        """Approve CI for a pull request held by the contributor gate.
+        """Approve CI for a pull request held by the approval gate.
         Authz: admins or repo writers."""
         project = await self.ctx.repo_or_404(forge, owner, name, request)
         actor = await self._require_repo_writer(request, project["id"])

@@ -133,20 +133,62 @@ which is why the same rules apply to web sessions and personal API tokens.
 Independent of repository permissions, instance admins can do everything, and PR
 authors can restart or cancel the builds of their own pull requests.
 
-### Approving outside contributors
+### Holding pull requests for approval
 
-Off by default. With `services.nixbot.prApproval.enable = true` pull requests
-whose `author_association` is not in `prApproval.trustedAssociations` (default
-`OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`) are not built. Pull requests
-whose head branch is in the repository itself (GitHub Apps, bots, maintainers
-pushing branches) always build, since that already required write access
-(repositories opt out with `require_approval = false` in the default branch's
-`nixbot.toml`). Instead the head commit gets an `action_required` check run with
-an **Approve CI** button. GitHub shows that button only to users with write
+Off by default. With `services.nixbot.prApproval.enable = true` a GitHub pull
+request builds only when one of three exemptions applies:
+
+- the PR author is listed in `prApproval.trustedAuthors` (default: empty),
+  matched exactly against the provider-qualified author nixbot records, for
+  example `github:renovate[bot]`;
+- the head branch is in the repository itself and `prApproval.trustSameRepo`
+  (default `true`) is set — pushing such a branch already needed write access,
+  which also covers GitHub Apps and bots that report `NONE`;
+- the PR's `author_association` is one of `prApproval.trustedAssociations`
+  (default `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`).
+
+```nix
+services.nixbot.prApproval = {
+  enable = true;
+  trustSameRepo = false;
+  trustedAssociations = [ ];
+  trustedAuthors = [
+    "github:our-updater[bot]"
+    "github:renovate[bot]"
+  ];
+};
+```
+
+The exemptions are independent: `trustSameRepo = false` only drops the
+same-repository exemption, so a PR from a repository `OWNER` or `COLLABORATOR`
+still builds. Configure `trustedAssociations = [ ]` as above to build only the
+listed authors automatically.
+
+A held PR is not built. Its head commit gets an `action_required` check run with
+an **Approve CI** button; GitHub shows that button only to users with write
 access. The project page in the web UI offers the same to repo writers and
 instance admins (`POST /api/repos/github/<owner>/<repo>/pulls/<n>/approve`).
 Approval unlocks the whole pull request: the held head builds immediately and
-later pushes build without asking again. Gitea and GitLab are unaffected.
+later pushes build without asking again. Repositories opt out with
+`require_approval = false` in the default branch's `nixbot.toml`. Gitea and
+GitLab are unaffected.
+
+### What the approval gate does not cover
+
+The gate decides how much builder time an unknown PR may spend, under the trust
+already granted to repository writers. It is not proof that the account named
+in `trustedAuthors` wrote the commits it builds:
+
+- The decision uses the PR author only. It says nothing about who wrote the
+  commits pushed to that branch afterwards, and pushes by a maintainer to an
+  untrusted PR do not admit it.
+- One approval applies to the whole PR, so every later push builds without
+  asking again.
+- Removing an author from `trustedAuthors` (or clearing `trustSameRepo`) does
+  not revoke an approval already recorded for a pull request: that PR keeps
+  building on later pushes.
+- Webhooks and the reconciliation poller evaluate the same fields, so a missed
+  webhook cannot bypass the gate.
 
 ## Troubleshooting
 

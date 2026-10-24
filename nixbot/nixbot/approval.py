@@ -1,11 +1,13 @@
-"""Approval gate for pull requests from outside contributors.
+"""Approval gate for untrusted pull requests.
 
-GitHub only: the webhook carries `author_association`; PRs whose head
-branch is in the base repository are trusted regardless. Untrusted PRs
-get an `action_required` check run with an approve button instead of a
-build. The click arrives as `check_run.requested_action` (GitHub shows
-the button only to users with write access). The web UI offers the
-same to repo writers. Approval unlocks the PR, later pushes build.
+GitHub only. A PR builds without approval when any exemption in
+`PrApprovalConfig` applies: its author is listed in `trusted_authors`,
+its head branch is in the base repository and `trust_same_repo` is
+set, or the webhook's `author_association` is trusted. Everything else
+gets an `action_required` check run with an approve button instead of
+a build. The click arrives as `check_run.requested_action` (GitHub
+shows the button only to users with write access). The web UI offers
+the same to repo writers. Approval unlocks the PR, later pushes build.
 Repositories opt out with `require_approval = false` in nixbot.toml.
 """
 
@@ -31,9 +33,14 @@ logger = logging.getLogger(__name__)
 def untrusted(config: PrApprovalConfig, change: ChangeRequest) -> bool:
     if not config.enable or change.forge != "github" or change.pr_number is None:
         return False
+    # PR author, not the sender of the latest webhook: a maintainer
+    # commenting on an automation PR must not admit it. Webhooks and
+    # reconciliation both build this from the PR's `user.login`.
+    if change.pr_author is not None and change.pr_author in config.trusted_authors:
+        return False
     # Pushing the head branch to the base repo already needed write
     # access. Covers GitHub Apps/bots, which always report NONE.
-    if change.head_in_base_repo:
+    if config.trust_same_repo and change.head_in_base_repo:
         return False
     return (change.author_association or "NONE") not in config.trusted_associations
 
@@ -91,7 +98,7 @@ class GitHubGatePoster:
             "output": {
                 "title": "Waiting for maintainer approval",
                 "summary": (
-                    "This pull request is from an outside contributor. "
+                    "This pull request does not build automatically. "
                     "A maintainer must approve CI for it."
                 ),
             },

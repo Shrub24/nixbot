@@ -171,6 +171,8 @@ let
       cache_failed_builds = cfg.cacheFailedBuilds;
       pr_approval = {
         enable = cfg.prApproval.enable;
+        trust_same_repo = cfg.prApproval.trustSameRepo;
+        trusted_authors = cfg.prApproval.trustedAuthors;
         trusted_associations = cfg.prApproval.trustedAssociations;
       };
       allow_unauthenticated_control = cfg.allowUnauthenticatedControl;
@@ -358,11 +360,35 @@ in
 
     prApproval = {
       enable = lib.mkEnableOption ''
-        holding GitHub pull requests from outside contributors until a
-        maintainer approves CI for them (check-run button or web UI).
-        Repositories opt out with `require_approval = false` in
-        nixbot.toml. See docs/GITHUB.md
+        holding untrusted GitHub pull requests until a maintainer approves
+        CI for them (check-run button or web UI). Repositories opt out with
+        `require_approval = false` in nixbot.toml. See docs/GITHUB.md
       '';
+      trustSameRepo = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Build pull requests whose head branch lives in the repository itself
+          without approval. Pushing such a branch already needs write access.
+          Set to `false` to hold them too; `trustedAssociations` can still
+          admit them, so combine with `trustedAssociations = [ ]` to build
+          only `trustedAuthors` automatically.
+        '';
+      };
+      trustedAuthors = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = ''
+          Provider-qualified PR authors that build without approval, matched
+          exactly against the pull request author (e.g. `github:renovate[bot]`).
+          This keys on the PR author, not on later commit authors or on who
+          pushed the latest update.
+        '';
+        example = [
+          "github:our-updater[bot]"
+          "github:renovate[bot]"
+        ];
+      };
       trustedAssociations = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [

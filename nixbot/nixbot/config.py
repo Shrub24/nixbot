@@ -229,13 +229,23 @@ class BuildStoreConfig(BaseModel):
 
 
 class PrApprovalConfig(BaseModel):
-    """Hold pull requests from outside contributors until a maintainer
-    approves them (docs/GITHUB.md). GitHub only: the decision uses the
-    webhook's `author_association`."""
+    """Hold untrusted pull requests until a maintainer approves them
+    (docs/GITHUB.md). GitHub only. A PR is admitted without approval
+    when its author is in `trusted_authors`, when `trust_same_repo`
+    allows a head branch in the base repository, or when the webhook's
+    `author_association` is in `trusted_associations`."""
 
     model_config = ConfigDict(extra="forbid")
 
     enable: bool = False
+    # Pushing a branch to the base repository already needed write
+    # access, so same-repo PRs are trusted by default. GitHub Apps and
+    # bots report NONE and lean on this exemption. Turning it off
+    # leaves `trusted_associations` intact.
+    trust_same_repo: bool = True
+    # Provider-qualified PR authors, exactly as carried in `pr_author`
+    # (`github:renovate[bot]`). Exact match, no patterns.
+    trusted_authors: list[str] = []
     trusted_associations: list[str] = [
         "OWNER",
         "MEMBER",

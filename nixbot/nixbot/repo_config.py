@@ -39,7 +39,7 @@ class BranchConfig(BaseModel):
     # configured branch globs. Default branch and merge-queue
     # branches always build. None means the global config applies.
     build_branches: list[str] | None = None
-    # False opts out of the instance-wide contributor approval gate.
+    # False opts out of the instance-wide approval gate.
     require_approval: bool = True
 
     @classmethod
