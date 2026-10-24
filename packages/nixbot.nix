@@ -1,6 +1,7 @@
 {
   buildPythonPackage,
   git,
+  openssl,
   hatchling,
   nix-eval-jobs,
   pydantic,
@@ -77,6 +78,11 @@ buildPythonPackage {
         pytest-xdist
         pytest-benchmark
         postgresql
+        # The GitHub client tests mint an app RSA key with the openssl
+        # CLI and skip without it (test_forge.py), which would silently
+        # drop the webhook/reconciliation parity coverage. The CLI lives
+        # in the `bin` output, not in the default one.
+        openssl.bin
         playwright
         pyte
       ]

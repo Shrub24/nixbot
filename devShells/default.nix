@@ -22,6 +22,10 @@ in
       pkgs.mypy
       pkgs.ruff
       pkgs.postgresql
+      # test_forge.py's GitHub client tests generate an app key and skip
+      # without the openssl CLI; keep the dev shell as complete as the
+      # package's pytest check (the CLI is in the `bin` output).
+      pkgs.openssl.bin
       self.packages.${system}.nix-eval-jobs
       # SQL codegen: `sqlc generate` regenerates nixbot/nixbot/db_gen
       # from sqlc.yaml.
