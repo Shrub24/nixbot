@@ -107,6 +107,14 @@ ONLY_LISTED_AUTHORS = PrApprovalConfig(
             id="listed-author-any-association",
         ),
         pytest.param(
+            # Matching is exact and includes the provider prefix, so an
+            # unprefixed entry trusts nobody (docs/GITHUB.md).
+            PrApprovalConfig(enable=True, trusted_authors=["renovate[bot]"]),
+            pr(pr_author="github:renovate[bot]"),
+            True,
+            id="unprefixed-author-matches-nothing",
+        ),
+        pytest.param(
             PrApprovalConfig(enable=True),
             pr(forge="gitea"),
             False,

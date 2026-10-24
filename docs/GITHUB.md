@@ -164,6 +164,10 @@ same-repository exemption, so a PR from a repository `OWNER` or `COLLABORATOR`
 still builds. Configure `trustedAssociations = [ ]` as above to build only the
 listed authors automatically.
 
+Author matching is exact, including the provider prefix nixbot records:
+`renovate[bot]` without `github:` matches nothing, and that PR is held as if no
+author exemption were configured.
+
 A held PR is not built. Its head commit gets an `action_required` check run with
 an **Approve CI** button; GitHub shows that button only to users with write
 access. The project page in the web UI offers the same to repo writers and
@@ -176,8 +180,8 @@ GitLab are unaffected.
 ### What the approval gate does not cover
 
 The gate decides how much builder time an unknown PR may spend, under the trust
-already granted to repository writers. It is not proof that the account named
-in `trustedAuthors` wrote the commits it builds:
+already granted to repository writers. It is not proof that the account named in
+`trustedAuthors` wrote the commits it builds:
 
 - The decision uses the PR author only. It says nothing about who wrote the
   commits pushed to that branch afterwards, and pushes by a maintainer to an

@@ -382,7 +382,8 @@ in
           Provider-qualified PR authors that build without approval, matched
           exactly against the pull request author (e.g. `github:renovate[bot]`).
           This keys on the PR author, not on later commit authors or on who
-          pushed the latest update.
+          pushed the latest update. A name that does not match exactly, prefix
+          included, trusts nobody: its PRs are held rather than admitted.
         '';
         example = [
           "github:our-updater[bot]"

@@ -505,6 +505,74 @@ async def test_pr_approval_trusts_listed_authors_only(
     assert gates == [(sha, 5)]
 
 
+async def test_pr_approval_is_pr_scoped_and_outlives_author_trust(
+    make_service: ServiceFactory, git_repo: tuple[Path, str]
+) -> None:
+    """docs/GITHUB.md: an approval is recorded per PR, so it keeps
+    admitting later pushes even though no author exemption applies to
+    them, and narrowing `trustedAuthors` cannot revoke it. Another PR
+    from the same author still needs its own approval."""
+    repo, sha = git_repo
+    service, _app = await make_service(
+        pr_approval=PrApprovalConfig(
+            enable=True,
+            trust_same_repo=False,
+            trusted_associations=[],
+        )
+    )
+    pool = service.pool
+    project_id = await seed_project(pool, f"file://{repo}")
+    forge_repo_id = await pool.fetchval(
+        "SELECT forge_repo_id FROM projects WHERE id = $1", project_id
+    )
+    handled: list[tuple[int | None, str]] = []
+    gates: list[tuple[str, int]] = []
+
+    async def fake_handle(event: Any, credentials: Any = None) -> None:
+        handled.append((event.pr_number, event.commit_sha))
+
+    class FakeGate:
+        async def post_gate(
+            self, owner: str, repo: str, sha: str, pr_number: int, details_url: str
+        ) -> None:
+            gates.append((sha, pr_number))
+
+    service.orchestrator.handle_change_event = fake_handle  # type: ignore[method-assign]
+    service.gate_poster = FakeGate()
+
+    def pr(number: int, commit: str) -> ChangeRequest:
+        return ChangeRequest(
+            forge="github",
+            forge_repo_id=forge_repo_id,
+            branch="main",
+            commit_sha=commit,
+            pr_number=number,
+            pr_author="github:renovate[bot]",
+            author_association="NONE",
+        )
+
+    await service.submit(pr(5, sha))
+    await service.drain_work()
+    assert handled == []
+    assert gates == [(sha, 5)]
+
+    await service.approve_pr(project_id, 5, "github:maint")
+    await service.drain_work()
+    assert handled == [(5, sha)]
+
+    # `trusted_authors` does not list this author, yet the recorded
+    # approval keeps admitting their pushes.
+    await service.submit(pr(5, "c1"))
+    await service.drain_work()
+    assert handled[-1] == (5, "c1")
+
+    # Approval is per PR, not per author.
+    await service.submit(pr(6, "c2"))
+    await service.drain_work()
+    assert handled[-1] == (5, "c1")
+    assert gates == [(sha, 5), ("c2", 6)]
+
+
 async def test_pr_approval_disabled_by_default(service: CIService) -> None:
     pool = service.pool
     project_id = await seed_project(pool, "http://x")
